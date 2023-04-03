@@ -79,6 +79,8 @@ def _promote_starting_position_vars_to_coords(ds):
 
 def integrate_trajectories(
     ds_position_scalars,
+    ds_fields,
+    ds_starting_fields,
     ds_starting_points,
     steps_backward=None,
     steps_forward=None,
@@ -102,6 +104,7 @@ def integrate_trajectories(
 
     ref_time = ds_starting_points.time
     ds_starting_points = ds_starting_points.assign_coords({"ref_time": ref_time})
+    ds_starting_fields = ds_starting_fields.assign_coords({"ref_time": ref_time})
 
     input_times = list(ds_position_scalars["time"].values)
     if ref_time not in input_times:
@@ -140,8 +143,10 @@ def integrate_trajectories(
     # all coordinates that are defined for the starting position variables will
     # be treated as if they represent different trajectories
 
-    ds_traj_backward = integrate_backward(
+    ds_traj_backward, ds_fields_along_traj = integrate_backward(
         ds_position_scalars=ds_position_scalars,
+        ds_fields=ds_fields,
+        ds_starting_fields=ds_starting_fields,
         ds_starting_point=ds_starting_points,
         da_times=da_times_backward,
         interp_order=interp_order,
@@ -150,6 +155,8 @@ def integrate_trajectories(
     ds_traj = integrate_forward(
         ds_position_scalars=ds_position_scalars,
         ds_back_trajectory=ds_traj_backward,
+        ds_fields=ds_fields,
+        ds_fields_along_traj=ds_fields_along_traj,
         da_times=da_times_forward,
         interp_order=interp_order,
         solver=forward_solver,

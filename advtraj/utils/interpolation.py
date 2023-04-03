@@ -11,7 +11,7 @@ from ..lib import fast_interp
 
 def map_1d_grid_index_to_position(idx_grid, da_coord):
     """
-    Map indecies `idx_grid` to the positios in grid defined by the
+    Map indecies `idx_grid` to the positions in grid defined by the
     cell-centered positions in `da_coord`.
 
     We assume that the grid-indecies map to the cell-center positions, so
@@ -31,11 +31,13 @@ def map_1d_grid_index_to_position(idx_grid, da_coord):
     """
 
     N = int(da_coord.count())
+    # print('da_coord',da_coord)
+    # print('idx_grid',idx_grid)
     # use linear interpolation because grid is assumed to be isotropic
     interp_order = 1
     fn_e = fast_interp.interp1d(0, N, 1, da_coord.values, e=1, k=interp_order)
     pos = fn_e(np.array(idx_grid))
-
+    # print('pos',pos)
     if np.any(np.isnan(pos)):
         raise Exception("Found nan during interpolation")
 
@@ -55,17 +57,21 @@ def interpolate_3d_field(da, ds_positions, interp_order=1, cyclic_boundaries=[])
     have cyclic boundaries, e.g. (`cyclic_boundaries = 'xy'` or
     `cyclic_boundaries = ['x', 'y']`)
     """
+
     c_min = np.array([da[c].min().values for c in da.dims])
     c_max = np.array([da[c].max().values for c in da.dims])
-    dX = np.array([da[c].attrs[f"d{c}"] for c in da.dims])
+    dX = np.array([da[c].attrs[f"d{c[0]}"] for c in da.dims])
     periodicity = [c in cyclic_boundaries for c in da.dims]
 
+    # print('Inteprol min',c_min,c_max,dX)
     fn = fast_interp.interp3d(
         a=c_min, b=c_max, h=dX, f=da.values, k=interp_order, p=periodicity
     )
-
-    vals = fn(*[ds_positions[c].values for c in da.dims])
-
+    # print('interp order',interp_order)
+    # print('da dims',da.dims)
+    # print('da',da)
+    vals = fn(*[ds_positions[c[0]].values for c in da.dims])
+    # print('x,y,z,vals',ds_positions['x'],ds_positions['y'],ds_positions['z'],vals)
     da_interpolated = xr.DataArray(
         vals,
         dims=ds_positions.dims,
@@ -82,16 +88,13 @@ def interpolate_from_interpolator(v, ds_positions, fn):
     Perform interpolation of variable named 'v' at positions given by data
     variables in `ds_positions` using interpolator fn.
     """
-
-    vals = fn(*[ds_positions[c].values for c in "xyz"])
-
+    vals = fn(*[ds_positions[c].values for c in "zyx"])
     da_interpolated = xr.DataArray(
         vals,
         dims=ds_positions.dims,
         coords=ds_positions.coords,
         name=v,
     )
-
     return da_interpolated
 
 
@@ -113,13 +116,12 @@ def interpolate_3d_fields(
 
     for v in ds.data_vars:
         if interpolator is not None and v in interpolator:
-
             da_interpolated = interpolate_from_interpolator(
                 v, ds_positions, interpolator[v]
             )
 
         else:
-
+            # print('Variable',v)
             da_interpolated = interpolate_3d_field(
                 da=ds[v],
                 ds_positions=ds_positions,
@@ -129,7 +131,9 @@ def interpolate_3d_fields(
         dataarrays.append(da_interpolated)
 
     ds_interpolated = xr.merge(dataarrays)
+
     ds_interpolated.attrs.update(ds.attrs)
+
     return ds_interpolated
 
 
@@ -162,8 +166,10 @@ def gen_interpolator_3d_fields(ds, interp_order=1, cyclic_boundaries=None) -> di
     coordinates which have cyclic boundaries,
     e.g. (`cyclic_boundaries = 'xy'` or `cyclic_boundaries = ['x', 'y']`)
     """
+
     interpolators = {}
     for v in ds.data_vars:
+
         interpolators[v] = gen_interpolator_3d_field(
             da=ds[v],
             interp_order=interp_order,

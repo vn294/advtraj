@@ -9,7 +9,7 @@ import xarray as xr
 from tqdm import tqdm
 
 from ..utils.grid import wrap_periodic_grid_coords
-from ..utils.interpolation import gen_interpolator_3d_fields
+from ..utils.interpolation import gen_interpolator_3d_fields, interpolate_3d_fields
 from .backward import calc_trajectory_previous_position
 
 
@@ -738,6 +738,8 @@ def _extrapolate_single_timestep(
 def forward(
     ds_position_scalars,
     ds_back_trajectory,
+    ds_fields,
+    ds_fields_along_traj,
     da_times,
     interp_order=5,
     solver="fixed_point_iterator",
@@ -784,7 +786,7 @@ def forward(
     # create a copy of the backward trajectory so that we have a dataset into
     # which we will accumulate the full trajectory
     ds_traj = ds_back_trajectory.copy()
-
+    ds_fields_traj = ds_fields_along_traj.copy()  # vn294
     if da_times.size == 0:
         print("No forward trajectories requested")
         return ds_traj
@@ -800,6 +802,10 @@ def forward(
         ds_position_scalars_origin = ds_position_scalars.sel(time=t_origin)
 
         ds_position_scalars_next = ds_position_scalars.sel(time=t_next)
+
+        # ds_fields_origin = ds_fields.sel(time=t_origin)  # vn294
+
+        ds_fields_next = ds_fields.sel(time=t_next)  # vn294
 
         # for the original direction estimate we need *previous* position (i.e.
         # where we were before the "origin" point)
@@ -819,4 +825,16 @@ def forward(
 
         ds_traj = xr.concat([ds_traj, ds_traj_posn_est], dim="time")
 
-    return ds_traj
+        ds_fields_locs = interpolate_3d_fields(
+            ds=ds_fields_next,
+            ds_positions=ds_traj_posn_est,
+            interpolator=None,
+            interp_order=5,
+            cyclic_boundaries="xy" if ds_position_scalars.xy_periodic else None,
+        )
+
+        ds_fields_traj = xr.concat([ds_fields_traj, ds_fields_locs], dim="time")
+
+    ds_traj_output = ds_traj.merge(ds_fields_traj, combine_attrs="drop")
+
+    return ds_traj_output

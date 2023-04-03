@@ -59,6 +59,8 @@ def calc_trajectory_previous_position(
 
 def backward(
     ds_position_scalars,
+    ds_fields,
+    ds_starting_fields,
     ds_starting_point,
     da_times,
     interp_order=5,
@@ -70,6 +72,8 @@ def backward(
     # create a list into which we will accumulate the trajectory points
     # while doing this we turn the time variable into a coordinate
     datasets = [ds_starting_point]
+    datasets_fields = [ds_starting_fields]
+    # datasets_merged = [ds_starting_point, ds_starting_fields]
 
     # step back in time, `t_current` represents the time we're of the next
     # point (backwards) of the trajectory
@@ -109,8 +113,27 @@ def backward(
         # Error in back trajectory is not quantifiable. Set to NaN.
         for c in "xyz":
             ds_traj_posn_prev[f"{c}_err"] = xr.full_like(ds_traj_posn_prev[c], np.NaN)
+        # vn294
+        # ds_fields_current = ds_fields.sel(time=t_current).drop_vars("time")
+        ds_fields_prev = ds_fields.sel(time=t_previous).drop_vars("time")
+
+        ds_fields_locs = interpolate_3d_fields(
+            ds=ds_fields_prev,
+            ds_positions=ds_traj_posn_prev,
+            interpolator=None,
+            interp_order=interp_order,
+            cyclic_boundaries="xy" if ds_fields_prev.xy_periodic else None,
+        )
+        ds_fields_locs_prev = ds_fields_locs.assign_coords({"time": t_previous.values})
+        # - ---------------------------------------------------------------
 
         datasets.append(ds_traj_posn_prev)
+        datasets_fields.append(ds_fields_locs_prev)  # vn294
 
-    ds_traj = xr.concat(datasets[::-1], dim="time")
-    return ds_traj
+    # ds_traj = xr.concat(datasets[::-1], dim="time")
+    ds_traj = xr.concat(datasets[::-1], dim="time", coords="minimal")  # vn294
+    ds_fields_along_traj = xr.concat(datasets_fields[::-1], dim="time")  # vn294
+    # ds_final_output = ds_traj.merge(
+    #    ds_fields_along_traj, combine_attrs="drop_conflicts"
+    # )  # vn294
+    return ds_traj, ds_fields_along_traj
