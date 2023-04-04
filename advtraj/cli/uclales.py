@@ -171,7 +171,7 @@ def main(data_path, file_prefix, output_path):
     first = True
     # ds_family_list = []
     # max_at_ref = []
-    for i in range(18, 40):
+    for i in range(40, 58):
         # as an example take the timestep half-way through the available data and
         # from 300m altitude and up
         # ds_subset = ds.isel(time=int(ds.time.count()) // 2)#.sel(z=slice(300, None))
