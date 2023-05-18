@@ -4,30 +4,29 @@ Interface for producing trajectories from UCLA-LES model output
 Model version with advective tracer trajectories implemented:
 https://github.com/leifdenby/uclales/tree/advective-trajectories
 """
+import pickle
 from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
 import xarray as xr
 
-# from .cstruct_selection import trajectory_cstruct_ref
-from .. import integrate_trajectories
+# from ..utils.matching_objects import matching_object_list
+from ..family.traj_family import (  # draw_object_graph,; find_matching_objects_ref,; graph_matching_objects,; print_matching_objects,; print_matching_objects_graph,
+    find_family_matching_objects,
+)
 from ..utils.cli import optional_debugging
 from ..utils.grid import find_coord_grid_spacing
 
-# from ..utils.object_tools import get_bounding_boxes
-# from ..utils.object_tools import get_bounding_boxes
-# from ..utils.object_tools import get_field_avg
-from ..utils.interpolation import interpolate_3d_fields
-from ..utils.object_tools import get_object_labels, unsplit_objects
+# from ..utils.interpolation import interpolate_3d_fields
+# from ..utils.object_tools import get_object_labels  # , unsplit_objects
+from ..utils.object_tools import get_bounding_boxes
 
-# from ..utils.matching_objects import matching_object_list
-# from ..family.traj_family import find_matching_objects_ref
-# from ..family.traj_family import find_family_matching_objects
-# from ..family.traj_family import print_matching_objects
-# from ..family.traj_family import graph_matching_objects
-# from ..family.traj_family import print_matching_objects_graph
-# from ..family.traj_family import draw_object_graph
+# from ..utils.object_tools import get_field_avg
+
+# from .cstruct_selection import trajectory_cstruct_ref
+# from .. import integrate_trajectories
+
 
 var_properties = {
     "u": [True, False, False],
@@ -41,6 +40,74 @@ var_properties = {
     "tracer_rad2": [False, False, False],
     "tracer_rad3": [False, False, False],
 }
+
+
+def unsplit_objects(ds_traj, Lx=None, Ly=None):
+    """
+    Unsplit a set of objects at a set of times using unsplit_object on each.
+    UCLALES domain extends from -Lx/2 to +Lx/2 (and the same in y) and from
+    -dz/2 to Lz-dz/2. This version of unsplit_objects deals with this difference.
+    Parameters
+    ----------
+        ds_traj     : xarray dataset
+            Trajectory points "x", "y", and "z" and "object_label".
+        Lx,Ly   : Domain size in x and y directions.
+    Returns
+    -------
+        Trajectory array with modified positions.
+    @author: Peter Clark (edited by Vishnu Nair for UCLALES data)
+    """
+    nobjects = ds_traj["object_label"].attrs["nobjects"]
+    if nobjects < 1:
+        return ds_traj
+
+    if Lx is None:
+        Lx = ds_traj.attrs["Lx"]
+    if Ly is None:
+        Ly = ds_traj.attrs["Ly"]
+
+    print("Unsplitting Objects:")
+
+    def _unsplit_object(tr):
+        """
+        Gather together points in object separated by cyclic boundaries.
+            For example, if an object spans the 0/Lx boundary, so some
+            points are close to zero, some close to Lx, they will be adjusted to
+            either go from negative to positive, close to 0, or less than Lx to
+            greater than. The algorithm is very simple. First, we only consider
+            sets of points whose span is greater than L/2, then either shift
+            in points in [0,L/4) to [L,5L/4) or from [3L/4,L) to [-L/4,0),
+            depending on which set of points has smaller number.
+        Parameters
+        ----------
+            tr      : xr.Dataset
+                Trajectory points belonging to object.
+        Returns
+        -------
+            tr      : xr.Dataset
+                Adjusted trajectory points in object.
+        @author: Peter Clark
+        """
+
+        L = (Lx, Ly)
+        for it in range(0, ds_traj["time"].size):
+            for idim, dim in enumerate("xy"):
+                v = tr[dim].isel(time=it)
+
+                if v.max() - v.min() > L[idim] / 2:
+                    q0 = v < L[idim] * 0.25 - L[idim] / 2
+                    q3 = v > L[idim] * 0.75 - L[idim] / 2
+                    # print('q0',q0)
+                    if q0.sum() < q3.sum():
+                        tr[dim].isel(time=it)[q0] += L[idim]
+                    else:
+                        tr[dim].isel(time=it)[q3] -= L[idim]
+
+        return tr
+
+    ds_traj = ds_traj.groupby("object_label").map(_unsplit_object)
+
+    return ds_traj
 
 
 def center_staggered_field(phi_da):
@@ -149,182 +216,229 @@ def load_data(files, fields_to_keep=["l"]):
     return ds
 
 
+# def main(data_path, file_prefix, output_path):
+#     thresh = 1.0e-6
+#     fields_to_keep = ["l", "q", "u","v", "w", "p", "t"]
+#     interp_order = 1
+#     unsplit = False
+#     read_from_file = True
+#     output_path = output_path.format(file_prefix=file_prefix)
+#     files = list(Path(data_path).glob(f"{file_prefix}.*.nc"))
+
+
+#     ds = load_data(files=files, fields_to_keep=fields_to_keep)
+#     tracers = [
+#         "traj_tracer_xi",
+#         "traj_tracer_xr",
+#         "traj_tracer_yi",
+#         "traj_tracer_yr",
+#         "traj_tracer_zr",
+#     ]
+#     first = True
+#     if read_from_file:
+#         ds_traj_final = xr.open_mfdataset('rico.trajectories.nc',parallel = True)
+#         first = False
+#     for i in range(53,58):
+#         ref_time = ds.time[i]
+#         print('Ref time',ref_time)
+#         ds_subset = ds.isel(time=i)
+#         # we'll use as starting points for the trajectories all points where the
+#         # liquid water mixing ratio is greater than a threshold
+#         mask = ds_subset.l > thresh
+#         mask.name = "cloud_mask"
+#         ds_poi = (
+#             mask.where(mask, drop=True)
+#             .stack(trajectory_number=("x", "y", "z"))
+#             .dropna(dim="trajectory_number")
+#         )
+#         # now we'll turn this 1D dataset where (x, y, z) are coordinates into one
+#         # where they are variables instead
+#         ds_starting_points = (
+#             ds_poi.reset_index("trajectory_number")
+#             .assign_coords(
+#                 trajectory_number=np.arange(ds_poi.trajectory_number.count())
+#             )
+#             .reset_coords(["x", "y", "z"])[["x", "y", "z"]]
+#         )
+#         # Set up matching error DataArrays
+#         for c in "xyz":
+#             ds_starting_points[f"{c}_err"] = xr.zeros_like(ds_starting_points[c])
+#         # Find contiguous objects and return a set of numeric labels matching
+#         # the ‘trajectory_number’ in ds_starting_points.
+#         # Note this takes account of objects that straddle the periodic x and y
+#         # boundaries.
+#         olab = get_object_labels(mask).drop("time")
+#         print("No of objects", olab.nobjects)##
+
+#         # Field values at the initial trajectory positions # Replace with interpolation call
+#         # print('Starting interpolation')
+#         ds_starting_fields = interpolate_3d_fields(
+#             ds=ds_subset[fields_to_keep],  # Fields at current time (t_ref)
+#             ds_positions=ds_starting_points,
+#             interpolator=None,
+#             interp_order=interp_order,
+#             cyclic_boundaries="xy" if ds_subset[fields_to_keep].xy_periodic else None,
+#         )
+#         ds_position_scalars = ds[tracers]  # Only the Lagrangian label tracers
+#         ds_fields = ds[fields_to_keep]  # To be used to interpolate and determine field values
+#         ds_traj = integrate_trajectories(
+#             ds_position_scalars=ds_position_scalars,
+#             ds_fields=ds_fields,
+#             ds_starting_fields=ds_starting_fields,
+#             ds_starting_points=ds_starting_points,
+#             #            steps_forward = 10,
+#             #            steps_backward = 10,
+#             interp_order=interp_order,
+#         )
+#         # Add the object labels as a non-dimensional coordinate.
+#         ds_traj = ds_traj.assign_coords({"object_label": olab})#
+
+#         # Objects may straddle the periodic boundaries at some times. This is an
+#         # issue for code that needs spatial coherence, e.g. measuring the horizontal size
+#         # of an object.
+#         # This function attempts to gather points together, with the result that some
+#         # will be outside the domain.
+#         # Only use this if you need it!
+#         Lx = ds.x.Lx
+#         Ly = ds.y.Ly
+#         if unsplit:
+#             ds_traj = unsplit_objects(ds_traj, Lx, Ly)
+#         # Create an object mask. This will be used to identify trajectories
+#         # (back and forward from a ref time) of interest within the set and create
+#         # a bounding box
+#         mask = (ds_traj.l > thresh)
+#         mask.name = 'object_mask'
+#         ds_traj = ds_traj.assign(object_mask = ds_traj.l > thresh)
+
+#         if first:
+#             ds_traj_final = ds_traj.copy()
+#             first = False
+#         else:
+#             ds_traj_final = xr.concat([ds_traj_final, ds_traj], dim="ref_time")
+
+#         # Add any attributes you want.
+#         # attrs = {'interp_order':5,
+#         #         'solver':minim,
+#         # }
+#         #        # attrs['maxiter'] = options['pioptions']['maxiter']
+#         #        # attrs['tol'] = options['pioptions']['tol']
+#         #        # attrs['minimize_maxiter'] =
+#         #        # options['pioptions']['minoptions']['minimize_options']['maxiter']
+#         #        # ds_traj.attrs = attrs
+
+#     output_path = output_path.format(file_prefix=file_prefix)
+#     ds_traj_final.to_netcdf(output_path)
+
+
 def main(data_path, file_prefix, output_path):
-    thresh = 1.0e-6
-    fields_to_keep = ["l", "q", "u", "w", "p", "t", "v"]
+    # thresh = 1.0e-6
+    # fields_to_keep = ["l", "q", "u","v", "w", "p", "t"]
     # variable_list=None
-    interp_order = 5
-    # unsplit = False
+    # interp_order = 1
+    # unsplit = True
+    read_from_file = True
+    output_path = output_path.format(file_prefix=file_prefix)
+    # files = list(Path(data_path).glob(f"{file_prefix}.*.nc"))
 
-    files = list(Path(data_path).glob(f"{file_prefix}.*.nc"))
-
-    ds = load_data(files=files, fields_to_keep=fields_to_keep)
-
-    tracers = [
-        "traj_tracer_xi",
-        "traj_tracer_xr",
-        "traj_tracer_yi",
-        "traj_tracer_yr",
-        "traj_tracer_zr",
-    ]
-    # t_ref = ds.time[int(ds.time.count()) // 2]
-    first = True
-    # ds_family_list = []
+    # ds = load_data(files=files, fields_to_keep=fields_to_keep)
+    # tracers = [
+    #    "traj_tracer_xi",
+    #    "traj_tracer_xr",
+    #    "traj_tracer_yi",
+    #    "traj_tracer_yr",
+    #    "traj_tracer_zr",
+    # ]
+    # first = True
+    if read_from_file:
+        ds_traj_family = xr.open_dataset("rico.trajectories.nc")
+        # first = False
+    ds_family_list = []
     # max_at_ref = []
-    for i in range(40, 58):
-        # as an example take the timestep half-way through the available data and
-        # from 300m altitude and up
-        # ds_subset = ds.isel(time=int(ds.time.count()) // 2)#.sel(z=slice(300, None))
-        ref_time = ds.time[i]
-        print("ref_time", ref_time.values)
-        ds_subset = ds.isel(time=i)
-        # ds_fields_subset = ds_subset[fields_to_keep]
+    # obj_area_thresh = 50.0 * 50.0
+    dx = 25.0
+    dy = 25.0
+    dz = 25.0
+    Lx = 12800  # ds_traj.attrs['Lx']
+    Ly = 12800  # ds_traj.attrs['Ly']
+    # Lz = 4000
+    for i in range(2, 50):
+        ds_traj = ds_traj_family.isel(ref_time=i)
 
-        # we'll use as starting points for the trajectories all points where the
-        # liquid water mixing ratio is greater than a threshold
-
-        # From PC email 05/07/22
-        # mask_w = ds_subset.w > 0.0
-        # ds_sub = ds_subset.where(mask_w)
-        # mask = (ds_subset.l > thresh)
-        # ds_subset = ds_sub.where(mask)
-
-        mask = ds_subset.l > thresh
-        mask.name = "cloud_mask"
-        ds_poi = (
-            mask.where(mask, drop=True)
-            .stack(trajectory_number=("x", "y", "z"))
-            .dropna(dim="trajectory_number")
-        )
-
-        # now we'll turn this 1D dataset where (x, y, z) are coordinates into one
-        # where they are variables instead
-        ds_starting_points = (
-            ds_poi.reset_index("trajectory_number")
-            .assign_coords(
-                trajectory_number=np.arange(ds_poi.trajectory_number.count())
-            )
-            .reset_coords(["x", "y", "z"])[["x", "y", "z"]]
-        )
-
-        # Set up matching error DataArrays
-        for c in "xyz":
-            ds_starting_points[f"{c}_err"] = xr.zeros_like(ds_starting_points[c])
-
-        # Find contiguous objects and return a set of numeric labels matching
-        # the ‘trajectory_number’ in ds_starting_points.
-        # Note this takes account of objects that straddle the periodic x and y
-        # boundaries.
-        olab = get_object_labels(mask).drop("time")
-        print("No of objects", olab.nobjects)
-
-        # Field values at the initial trajectory positions # Replace with interpolation call
-        # print('Starting interpolation')
-        ds_starting_fields = interpolate_3d_fields(
-            ds=ds_subset[fields_to_keep],  # Fields at current time (t_ref)
-            ds_positions=ds_starting_points,
-            interpolator=None,
-            interp_order=interp_order,
-            cyclic_boundaries="xy" if ds_subset[fields_to_keep].xy_periodic else None,
-        )
-        # print('Finishing interpolation')
-        ds_position_scalars = ds[tracers]  # Only the Lagrangian label tracers
-        ds_fields = ds[
-            fields_to_keep
-        ]  # To be used to interpolate and determine field values
-        ds_traj = integrate_trajectories(
-            ds_position_scalars=ds_position_scalars,
-            ds_fields=ds_fields,
-            ds_starting_fields=ds_starting_fields,
-            ds_starting_points=ds_starting_points,
-            interp_order=interp_order,
-        )
-        # Add the object labels as a non-dimensional coordinate.
-        ds_traj = ds_traj.assign_coords({"object_label": olab})
-        # Objects may straddle the periodic boundaries at some times. This is an
-        # issue for code that needs spatial coherence, e.g. measuring the horizontal size
-        # of an object.
-        # This function attempts to gather points together, with the result that some
-        # will be outside the domain.
-        # Only use this if you need it!
-        Lx = ds.x.Lx
-        Ly = ds.y.Ly
-        # if unsplit:
         ds_traj = unsplit_objects(ds_traj, Lx, Ly)
-
+        ds_traj.attrs["Lx"] = Lx
+        ds_traj.attrs["Ly"] = Ly
+        ds_traj.attrs["dx"] = dx  # ds["x"].attrs["dx"]
+        ds_traj.attrs["dy"] = dy  # ds["y"].attrs["dy"]
+        ds_traj.attrs["dz"] = dz
+        ref_time = ds_traj.ref_time
+        print("Ref time", ref_time)
         # Create an object mask. This will be used to identify trajectories
         # (back and forward from a ref time) of interest within the set and create
         # a bounding box
         # mask = (ds_traj.l > thresh)
         # mask.name = 'object_mask'
-
         # ds_traj = ds_traj.assign(object_mask = ds_traj.l > thresh)
-        # ds_bounds = get_bounding_boxes(ds_traj,use_mask=False)
+        ds_bounds = get_bounding_boxes(ds_traj, use_mask=False)  #
 
         # Find fully developed clouds (LWC is maximum) if any, at the reference time
         # ds_field_mean = get_field_avg(ds_traj,use_mask=False)
-        # maxobjvar = (ds_field_mean.LWC == ds_field_mean.LWC.max())
+        # maxobjvar = (ds_field_mean.LWC == ds_field_mean.LWC.max(dim='time'))
         # max_at_ref_time = []
         # for obj in maxobjvar.object_label:
-        #    max_objvar = (ds_field_mean.LWC[obj] == ds_field_mean.LWC[obj].max())
-        #    time_max_objvar = ds_field_mean.time.values[(max_objvar.values)]
+        #    object_no = obj.object_label.values.item()
+        #    #max_objvar = (ds_field_mean.LWC[obj] == ds_field_mean.LWC[obj].max())
+        #    time_max_objvar = ds_field_mean.time.values[maxobjvar[int(object_no)]]
         #    if (time_max_objvar.size > 0):
         #        if (time_max_objvar == ref_time.values):
-        #           #max_at_ref[ref_time] = obj.object_label.values
-        #            max_at_ref_time.append(obj.object_label.values.item())
+        #            obj_bounds = ds_bounds.sel(object_label = obj).sel(time=ref_time.values)
+        #            obj_area = (obj_bounds.x_max - obj_bounds.x_min)*(obj_bounds.y_max - obj_bounds.y_min)
+        #            if obj_area > obj_area_thresh:
+        #                #max_at_ref[ref_time] = obj.object_label.values
+        #                max_at_ref_time.append(object_no)
+        #                #max_at_ref[ref_time] = obj.object_label.values
+        #                #max_at_ref_time.append(obj.object_label.values.item())
         # max_at_ref.append(max_at_ref_time)
         # print('max at reference time ', ref_time.values,'is', max_at_ref)
-        if first:
-            ds_traj_final = ds_traj.copy()
-            #    ds_bounds_final = ds_bounds.copy()
-            first = False
-        else:
-            ds_traj_final = xr.concat([ds_traj_final, ds_traj], dim="ref_time")
+
+        # if first:
+        #    #ds_traj_final = ds_traj.copy()
+        #    ds_bounds_final = ds_bounds.copy()
+        #    first = False
+        # else:
+        #    #ds_traj_final = xr.concat([ds_traj_final, ds_traj], dim="ref_time")
         #    ds_bounds_final = xr.concat([ds_bounds_final, ds_bounds],dim="ref_time")
 
         # Add any attributes you want.
-        # attrs = {'interp_order':5,
+        # attrs = {'interp_order':1,
         #         'solver':minim,
         # }
-        # attrs['maxiter'] = options['pioptions']['maxiter']
-        # attrs['tol'] = options['pioptions']['tol']
-        # attrs['minimize_maxiter'] =
-        # options['pioptions']['minoptions']['minimize_options']['maxiter']
-        # ds_traj.attrs = attrs
-        # ds_bounds.attrs["Lx"] = Lx
-        # ds_bounds.attrs["Ly"] = Ly
-        # ds_bounds.attrs["dx"] = ds["x"].attrs["dx"]
-        # ds_bounds.attrs["dy"] = ds["y"].attrs["dy"]
-        ds_traj.attrs["Lx"] = Lx
-        ds_traj.attrs["Ly"] = Ly
-        ds_traj.attrs["dx"] = ds["x"].attrs["dx"]
-        ds_traj.attrs["dy"] = ds["y"].attrs["dy"]
-        # ds_family_list.append(tuple((ds_traj,ds_bounds)))
+        #        # attrs['maxiter'] = options['pioptions']['maxiter']
+        #        # attrs['tol'] = options['pioptions']['tol']
+        #        # attrs['minimize_maxiter'] =
+        #        # options['pioptions']['minoptions']['minimize_options']['maxiter']
+        # print('ds_traj attributes',ds_traj.attrs)
 
-    output_path = output_path.format(file_prefix=file_prefix)
-    ds_traj_final.to_netcdf(output_path)
+        ds_bounds.attrs["Lx"] = Lx
+        ds_bounds.attrs["Ly"] = Ly
+        ds_bounds.attrs["dx"] = dx  # s["x"].attrs["dx"]
+        ds_bounds.attrs["dy"] = dy  # s["y"].attrs["dy"]
+        ds_family_list.append(tuple((ds_traj, ds_bounds)))
+    with open("family_list.bin", "wb") as f:
+        pickle.dump(ds_family_list, f)
+    # output_path = output_path.format(file_prefix=file_prefix)
+    # ds_traj_final.to_netcdf(output_path)
 
-    # mol = matching_object_list(ds_out_final,master_ref=i-2,select_object=[0])
-    # mol = find_matching_objects_ref(ds_family_list,
-    #                                master_ref_time=None,
-    #                                select=[0],
-    #                                ref_time_only = True,
-    #                                forward=True,
-    #                                adjacent_only=True,
-    #                                fast=True,
-    #                                use_numpy=False)
-    # print('ds_family_list attrs',ds_family_list.attrs)
-    # mol_family = find_family_matching_objects(ds_family_list,
-    #                                          select = max_at_ref,
-    #                                          ref_time_only = True,
-    #                                          forward = True,
-    #                                          adjacent_only = False,
-    #                                          fast = True,
-    #                                          use_numpy=False)
-
-    # print('mol',mol_family)
-    # print_matching_objects(mol_family)
-    # print(f"Trajectories saved to {output_path}")
+    mol_family = find_family_matching_objects(
+        ds_family_list,
+        select=None,
+        ref_time_only=True,
+        forward=True,
+        adjacent_only=False,
+        fast=True,
+        use_numpy=False,
+    )
+    with open("mol_family.bin", "wb") as f:
+        pickle.dump(mol_family, f)
     # matching_obj_to_nodelist(mol_family)
     # G = graph_matching_objects(mol_family)
     # print_matching_objects_graph(G)
@@ -339,7 +453,7 @@ if __name__ == "__main__":
     argparser.add_argument("file_prefix", type=Path)
     argparser.add_argument("--debug", default=False, action="store_true")
     argparser.add_argument(
-        "--output", type=str, default="{file_prefix}.trajectories.nc"
+        "--output", type=str, default="{file_prefix}.trajectories_1.nc"
     )
     args = argparser.parse_args()
 

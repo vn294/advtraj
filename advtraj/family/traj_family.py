@@ -745,11 +745,12 @@ def find_family_matching_objects(
 
     mol_family = {}
 
-    for it, master_ref_time in enumerate(ref_times):
+    # for it, master_ref_time in enumerate(ref_times):
+    for master_ref_time in ref_times:
         mol = find_matching_objects_ref(
             traj_family_list,
             master_ref_time,  # float(master_ref_time)
-            select=select[it],
+            # select=None,#select[it],
             ref_time_only=ref_time_only,
             forward=forward,
             adjacent_only=adjacent_only,

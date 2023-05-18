@@ -8,6 +8,8 @@ import xarray as xr
 
 from ..lib import fast_interp
 
+# from lib import fast_interp
+
 
 def map_1d_grid_index_to_position(idx_grid, da_coord):
     """
@@ -31,8 +33,7 @@ def map_1d_grid_index_to_position(idx_grid, da_coord):
     """
 
     N = int(da_coord.count())
-    # print('da_coord',da_coord)
-    # print('idx_grid',idx_grid)
+
     # use linear interpolation because grid is assumed to be isotropic
     interp_order = 1
     fn_e = fast_interp.interp1d(0, N, 1, da_coord.values, e=1, k=interp_order)
@@ -68,10 +69,12 @@ def interpolate_3d_field(da, ds_positions, interp_order=1, cyclic_boundaries=[])
         a=c_min, b=c_max, h=dX, f=da.values, k=interp_order, p=periodicity
     )
     # print('interp order',interp_order)
-    # print('da dims',da.dims)
-    # print('da',da)
+    # print('da dims',[ds_positions[c[0]].values for c in da.dims])
+    # print('ds_positions',ds_positions[])
     vals = fn(*[ds_positions[c[0]].values for c in da.dims])
     # print('x,y,z,vals',ds_positions['x'],ds_positions['y'],ds_positions['z'],vals)
+    # print('da',da)
+    # print('vals min',vals.min())
     da_interpolated = xr.DataArray(
         vals,
         dims=ds_positions.dims,
@@ -88,6 +91,7 @@ def interpolate_from_interpolator(v, ds_positions, fn):
     Perform interpolation of variable named 'v' at positions given by data
     variables in `ds_positions` using interpolator fn.
     """
+    # print('Int from int',[ds_positions[c] for c in "zyx"])
     vals = fn(*[ds_positions[c].values for c in "zyx"])
     da_interpolated = xr.DataArray(
         vals,
@@ -150,7 +154,9 @@ def gen_interpolator_3d_field(da, interp_order=1, cyclic_boundaries=None):
     c_max = np.array([da[c].max().values for c in da.dims])
     dX = np.array([da[c].attrs[f"d{c}"] for c in da.dims])
     periodicity = [c in cyclic_boundaries for c in da.dims]
-
+    # print('Generating interpolator',interp_order, c_min, c_max, dX)
+    # print('c',[c for c in da.dims])
+    # print('da',da)
     fn = fast_interp.interp3d(
         a=c_min, b=c_max, h=dX, f=da.values, k=interp_order, p=periodicity
     )

@@ -662,6 +662,7 @@ def _extrapolate_single_timestep(
 
     # Generate interpolator for repeated interpolation of fields during
     # iteration.
+
     interpolator = gen_interpolator_3d_fields(
         ds_position_scalars_next, interp_order=interp_order, cyclic_boundaries="xy"
     )
@@ -811,7 +812,7 @@ def forward(
         # where we were before the "origin" point)
         ds_traj_posn_prev = ds_traj.isel(time=-2)
         # ds_traj_posn_prev = ds_traj.isel(time=[-3,-2])
-
+        # print('Forward tmie',t_next)
         ds_traj_posn_est = _extrapolate_single_timestep(
             ds_position_scalars_origin=ds_position_scalars_origin,
             ds_position_scalars_next=ds_position_scalars_next,
@@ -829,12 +830,12 @@ def forward(
             ds=ds_fields_next,
             ds_positions=ds_traj_posn_est,
             interpolator=None,
-            interp_order=5,
+            interp_order=interp_order,
             cyclic_boundaries="xy" if ds_position_scalars.xy_periodic else None,
         )
 
         ds_fields_traj = xr.concat([ds_fields_traj, ds_fields_locs], dim="time")
-
+        # print('forward l min',ds_fields_locs.l.min())
     ds_traj_output = ds_traj.merge(ds_fields_traj, combine_attrs="drop")
 
     return ds_traj_output

@@ -116,7 +116,7 @@ def backward(
         # vn294
         # ds_fields_current = ds_fields.sel(time=t_current).drop_vars("time")
         ds_fields_prev = ds_fields.sel(time=t_previous).drop_vars("time")
-
+        # print('Backward time',t_previous)
         ds_fields_locs = interpolate_3d_fields(
             ds=ds_fields_prev,
             ds_positions=ds_traj_posn_prev,
@@ -124,6 +124,11 @@ def backward(
             interp_order=interp_order,
             cyclic_boundaries="xy" if ds_fields_prev.xy_periodic else None,
         )
+        # print('l min in fields',ds_fields_prev.l.min(skipna=True))
+        # print('l min',ds_fields_prev.l.values[20:30,120:125,200:205])
+        # print('l min index',ds_fields_locs.l.idxmin())
+        # print('traj at min',ds_traj_posn_prev.x.values[49512],ds_traj_posn_prev.y.values[49512],ds_traj_posn_prev.z.values[49512])
+        # print('Backward l min',ds_fields_locs.l.min())
         ds_fields_locs_prev = ds_fields_locs.assign_coords({"time": t_previous.values})
         # - ---------------------------------------------------------------
 
